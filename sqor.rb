@@ -9,36 +9,50 @@ require 'byebug' # Debugging gem
 #
 
 #
-# MySQL DB creds. We'll make these secret for production runs. 
-# We should also prompt the user to get the parameters.
+# My assumption: Assume a single MongoDB instance per competition. 
+# We could consolidate competitions into a single large DB, 
+# but for the purposes of this exercise, a single instance per 
+# competition it makes the data easier to debug and deal with data. 
+#
+# In production, it this architecture would add operations overhead 
+# (another DB instance to deploy and monitor). However, this would
+# be mitigated if infrastructure is managed as code (ie, Puppet, Ansible.)
+# On the codingside, it would simplify data structures (less nesting),
+# possibly improve query performance (fewer total records to sort),
+# and limit the size of your fault domain (easier to debug).
 #
 
-creds = {user: 'foo', password: 'never in source'}
+#
+# MySQL DB creds. We'll make these secret for production runs. 
+# We should also prompt the user to get the parameters.
+# 
+
+creds = {user: 'foo', password: 'never-in-source'}
 
 #
 # Stub: Connect to MySQL. Don't do this more than once per report
 # run. We don't want 15,000 MySQL connections (one per user.)
 #
 
-def connectToMySql(creds)
+def connect_to_mysql(creds)
   
   #
   # Initiate a connection to the DB.
   #
   
-  connection = 'A_db_connection'
+  connection = 'a_db_connection'
   
   return db_connection
 end
 
 #
-# Stub: Helper to run a query against the DB.
+# Stub: Helper to run a query against the MySQL DB.
 # 
 # If we use ActiveRecord for this, a lot of the underlying DB
 # mechanics become easier to manage. 
 #
 
-def queryDB(query,db_connection)
+def query_db(query,db_connection)
   result = 'The result of our query'
 end
 
@@ -46,18 +60,23 @@ end
 # Stub: Get all the user profile records from MySQL.
 #
 
-def getAllUsers(dbConnection)
-  query = 'Get all the user records.'
-  users = queryDB(query,dbConnection) # Last value in a function is 
-                                      # the return value. 
+def get_all_users(db_connection)
+  placeholder_query = 'Get all the user records.'
+  
+  users = query_db(placeholder_query,db_connection) 
+  
+  #
+  # Last value in a function is the return value. 
+  #
+  
 end
 
 #
 # Stub: Retrieve all the user_answers from MongoDB.
-# Returns all user_answer entities.
+# Returns all user_answer entities for the given challenge.
 #
 
-def getAllUserAnswers()
+def get_all_user_answers(competition_id)
   
 end
 
@@ -67,14 +86,14 @@ end
 # is an anonymous hash. This 
 #
 
-def createQuestionSet(tag)
+def create_question_set(tag)
   
-  questionSet = nil
+  question_set = nil
   
   #
   # Iterate through all the questions in the DB
   # If question[:tag] == tag, then add that question
-  # entity to questionSet
+  # entity to question_set
   #
   
   return questionSet
@@ -118,32 +137,6 @@ end
 # Do this only once and then pass the result to functions as necessary.
 #
 
-=begin
-def getExpectedAnswersPoints(allQuestionSets)
-  
-  #
-  # Want this: { :qsetID1 => [["a",2],["b",2]}
-  # We have the answer value in position 0, and the point value
-  # in position 1.
-  #
-  # We should break this out and do it once in its own
-  # method rather than repeating the calculation.
-  #
-  
-  expectedAnswers = {}
-  allQuestionSets.each do |id,params|
-    results = []
-    params.each do |entity|
-      results << {:answer => entity[:answer], :points => entity[:points], 
-                  :type => entity[:type]}
-    end
-    expectedAnswers[id] = results
-  end
-  
-  return expectedAnswers
-end
-
-=end
 
 #
 # Calculate total points earned. For now, we'll use the points in userAnswers.
@@ -164,39 +157,6 @@ def calculatePointsEarned(userAnswers)
   puts "DEBUG: Total points earned: #{points}"
   return points
 end
-
-#
-# Define a single question. Its data might look like this.
-#
-=begin
-question1 = {question: "This is a sample question.",
-            answer: "A",
-            type: "multi",
-            points: 1,
-            tag: "chemistry_experiments"}     
-
-#
-# Create some more sample data.
-#
-
-question2 = {question: "This is another question.",
-             answer: "B",
-             type: "multi",
-             points: 2,
-             tag: "rocket_science"}
-             
-question3 = {question: "How much wood could a woodchuck...",
-            answer: "C",
-            type: "multi",
-            points: 3,
-            tag: "chemistry_experiments"}
-            
-question4 = {question: "Tell me the meaning of life.",
-            answer: nil,
-            type: "text",
-            points: 10,
-            tag: "rocket science"}
-=end
 
 #
 # Sample question data. In real-life, we'd get this from 
@@ -273,7 +233,7 @@ current_competition = competitions[:competition_id_1]
 # user_answers for the competition
 #
 
-# user_answers = getAllAnswers(competition_id)
+# user_answers = get_all_answers(competition_id)
 
 #
 # Here's our placeholder data for users and their associated answers.
@@ -340,35 +300,43 @@ user_answers = { :user_id_1 =>
                    }
                  }
                }  
-#
-# Entering a new user answer entry would look like this:
-# userAnswers[userID] = {:qsetID1 = ["A", "C"],
-#                        :qsetID2 = ["C", "Drawing blanks."]}
-#
 
 #
-# Sample user list. We'll be getting this info from MySQL.
+# Sample user profile hash. Simplified to only contain name, 
+# although the real listings will have other attributes like full name, 
+# e-mail, and other tasty nuggets of profile info.
+#
+# We'll be getting this info from MySQL.
+# Thought: The entire user list might be huge. It probably makes more
+# sense to retrieve the users_answers data from Mongo first, pull user_ids, then 
+# query MySQL using only those user_ids to get profile data.
+#
+# Since user_ids will be primary keys in MySQL, the search is implicitly 
+# indexed and should be fast.
 #
 
-users = { :user1 => {:name => "Suzie"}, :user2 => {:name => "Roy"} }
+users = { :user_id_1 => {:name => "Suzie", 
+                         :competitions => [:competition_id_1]}, 
+          :user_id_2 => {:name => "Roy",
+                         :competitions => [:competition_id_1]}
+        }
+
 
 #
-# If we were actually connecting to a DB, we could populate our list
-# this way. Having access to 'users' now is helpful, so let's keep it
-# around. Let's also say that user accounts are tagged with the challenges
-# they've done, so we can filter based on that attribute; this is a good
-# place for a DB index.
+# Retrieve the current competition based on its name.
+# This report will run per-competition.
 #
 
-# challengeTag = 'sample_challenge'
-# users = getAllUserIdsFromMySql(challengeTag)
+competition_name = "awesome challenge" # This will be user input
+puts "Retrieving competition #{competition_name}"
 
-#
-# Break this out once instead of doing the operation per user.
-#
+current_competition = competitions.select do |competition_id, params| 
+  params[:competition_name == competition_name]
+end
+            
+# current_competition = competitions[:competition_id_1]
 
-expectedAnswers = getExpectedAnswersPoints(allQuestionSets)
- 
+
 #
 # Our app now should have the information it needs.
 #
