@@ -232,29 +232,28 @@ questions = { question_id_1 => {
                 :tag => "rocket_science",
                 :reviewed => nil }            
             }          
-
-=begin
+         
 #
-# Create sample question sets. We could store these in the DB
-# with unique IDs. So, QuestionSets[:qsetID1] == [ question3, question1 ].
-#             
-
-questionSetChem = { :qsetID1 => { question3, question1  }
-questionSetRockets = { :qsetID2 => [ question2, question4 ] }
-=end
-            
-#
-# Just another representation of the same data, for the example that's coming
-# below.
+# How are question_sets data might look in the DB. Sample data here.
 #
 
-allQuestionSets = { :qsetID1 => [ question3, question1 ],
-                    :qsetID2 => [ question2, question4 ] }
+question_sets = { :qset_id_1 => [ question_id1, question_id2 ],
+                  :qset_id_2 => [ question_id3, question_id4 ] }
 #
 # A challenge is defined by its question sets. Let's make a sample one now.
+# This data structure would exist in Mongo.
 #
                         
-sampleChallenge = [questionSetChem, questionSetRockets]
+competitions = { :competition_id_1 => { 
+                   :competition_name => "awesome challenge",
+                   :question_sets => [:qset_id_1,:qset_id_2] }
+               }
+
+#
+# TODO: Move this to where it belongs. Group calls. 
+#
+               
+current_competition = competitions[:competition_id_1]
 
 #
 # On the Mongo side, we'll store information about questions, question sets, 
@@ -270,22 +269,77 @@ sampleChallenge = [questionSetChem, questionSetRockets]
 #
 
 #
-# Only run this call once when making the report.
+# Only run this call once when making the report. This would retrieve all
+# user_answers for the competition
 #
 
-#allAnswers = getAllAnswers()
+# user_answers = getAllAnswers(competition_id)
 
 #
-# Here's our placeholder data
+# Here's our placeholder data for users and their associated answers.
+# This would come from Mongo. We're keeping the :reviewed metadata
+# across results, for symmetry. There is some duplication of data 
+# between this data structure and the questions data structure.
+#
+# Assume that user data is manually reviewed through a separate service.
+# We're only going to calculate score entries when all entries of 
+# type "multi" are submitted and entries of type "text" are marked as 
+# :reviewed = true
 #
 
-allAnswers = { :user1 => { :qsetID1 => ["A","B"],
-                            :qSetID2 => ["B", "This is my answer."]
-                            },
-               :user2 => { :qsetID1 => ["A","L"],
-                           :qsetID2 => ["S", "This is not my real answer."]}
-              }
-              
+user_answers = { :user_id_1 => 
+                 { :qset_id_1 => 
+                   { :question_id_1 => { 
+                       :answer => "a", 
+                       :points => 1,
+                       :type => "multi",
+                       :reviewed => false },
+                     :question_id_2 => {
+                       :answer => "b", 
+                       :points => 2,
+                       :type => "multi",
+                       :reviewed => false }
+                   },
+                   :qset_id_2 =>
+                   { :question_id_3 => { 
+                       :answer => "c", 
+                       :points => 3,
+                       :type => "multi",
+                       :reviewed => false },
+                     :question_id_4 => {
+                       :answer => "My wonderful answer", 
+                       :points => 10, 
+                       :type => "text",
+                       :reviewed => true }
+                   }
+                 },
+                 :user_id_2 =>
+                 { :qset_id_1 => 
+                   { :question_id_1 => { 
+                       :answer => "c", 
+                       :points => 0,
+                       :type => "multi", 
+                       :reviewed => false },
+                     :question_id_2 => {
+                       :answer => "b", 
+                       :points => 2,
+                       :type => "multi", 
+                       :reviewed => false }
+                   },
+                   :qset_id_2 =>
+                   { :question_id_3 => { 
+                       :answer => "b", 
+                       :points => 0,
+                       :type => "multi", 
+                       :reviewed => false },
+                     :question_id_4 => {
+                       :answer => "My thoughtful answer", 
+                       :points => 10, 
+                       :type => "text"
+                       :reviewed => true }
+                   }
+                 }
+               }  
 #
 # Entering a new user answer entry would look like this:
 # userAnswers[userID] = {:qsetID1 = ["A", "C"],
