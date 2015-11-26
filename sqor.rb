@@ -5,22 +5,24 @@ require 'axlsx'  # Excel output gem.
 # Get data from multiple sources. MySQL (user profiles), Facebook's API 
 # (Likes and comments), and MongoDB (questions, user answers, question sets,
 # file uploads.) Use an Excel report generation tool to output basic user
-# information and calculated stats about a users performance 
+# information and calculated stats about a user's performance 
 # (ie, number correct out of total.)
 #
 
 #
 # My assumption: Assume a single MongoDB instance per competition. 
 # We could consolidate competitions into a single large DB, 
-# but for the purposes of this exercise, a single instance per 
-# competition it makes the data easier to debug and deal with data. 
+# but for the purposes of this exercise, with a single instance per 
+# competition, it makes the data easier to debug and deal with.
 #
-# In production, it this architecture would add operations overhead 
+# In production, this architecture would add operations overhead 
 # (another DB instance to deploy and monitor). However, this would
-# be mitigated if infrastructure is managed as code (ie, Puppet, Ansible.)
-# On the codingside, it would simplify data structures (less nesting),
-# possibly improve query performance (fewer total records to sort),
-# and limit the size of your fault domain (easier to debug).
+# be mitigated if infrastructure was managed as code (ie, Puppet, Ansible.)
+# It would just be another cookie-cutter instance.
+# On the coding side, having multiple Mongo instances would simplify data 
+# structures (less nesting), possibly improve query performance 
+# (fewer total records to sort), and limit the size of your 
+# fault domain for any given competition (easier to debug).
 #
 
 ####
@@ -33,7 +35,8 @@ require 'axlsx'  # Excel output gem.
 # MySQL DB connection params. We'll make authentication info secret
 # for production runs. We should also prompt the user to get the 
 # parameters. This is all assuming we're talking straight to the DB
-# and not 
+# and not using an abstraction layer like ActiveRecord. We probably
+# should.
 # 
 
 sql_params = { 
@@ -59,6 +62,7 @@ facebook_instance = nil
 user_id_list = nil # Helper list for the facebook API queries.
 highest_possible_score = 0 # This gets set later.
 facebook_api_key = 'some value'
+report_data_structure = {}
 
 ####
 # End script parameters.
@@ -71,16 +75,16 @@ facebook_api_key = 'some value'
 ####
 
 #
-# These would be user input, for creating question sets. But for the purposes 
-# of this script, assume that's already been done. Keep this tool focused on
-# generating the report.
+# Sample tags. Assume in production that we get these from our users.
 #
 
 tags = ["rocket science","chem_experiments"] 
 
 #
-# Sample cloud files
+# Sample cloud files. These are uploaded to MongoDB
+# by users taking the challenge.
 #
+
 cloud_files = {
   :user_id_1 => [
     {
@@ -103,7 +107,8 @@ cloud_files = {
 #
 # Sample question data, representing two different question tags. 
 # In real-life, we'd get this from MongoDB and allow the user
-# to specify tags.
+# to specify tags that we'd use as filters against a larger dataset
+# of questions.
 #
 
 questions = { :question_id_1 => {
@@ -142,9 +147,11 @@ questions = { :question_id_1 => {
 
 question_sets = { :qset_id_1 => [ :question_id_1, :question_id_2 ],
                   :qset_id_2 => [ :question_id_3, :question_id_4 ] }
+
 #
-# A challenge is defined by its question sets. Let's make a sample one now.
-# This data structure would exist in Mongo.
+# A challenge is defined in part by its question sets. Let's make a sample one now.
+# This data structure would exist in Mongo. If we're looking at a single Mongo
+# instance for a competition, then this will be a tiny bit of data.
 #
                         
 competitions = [{  :competition_id => 'competition_id_1',
@@ -156,16 +163,7 @@ competitions = [{  :competition_id => 'competition_id_1',
 #
 # Let's say that, for a given challenge, a user won't participate more than once.
 # Let's also work under the assumption that DB calls are expensive, so the fewer
-# of them we can make, the better. We'll chunk the user_answer information. 
-#
-
-#
-# Only run this call once when making the report. This would retrieve all
-# user_answers for the competition
-#
-
-# user_answers = get_all_answers(competition_id)
-
+# of them we can make, the better. We'll chunk the users_answers information. 
 #
 # Here's our placeholder data for users and their associated answers.
 # This would come from Mongo. We're keeping the :reviewed metadata
@@ -175,7 +173,7 @@ competitions = [{  :competition_id => 'competition_id_1',
 # Assume that user data is manually reviewed through a separate service.
 # We're only going to calculate score entries when all entries of 
 # type "multi" are submitted and entries of type "text" are marked as 
-# :reviewed = true
+# :reviewed = true.
 #
 
 users_answers = { :user_id_1 => 
@@ -238,9 +236,6 @@ users_answers = { :user_id_1 =>
 # e-mail, and other tasty nuggets of profile info.
 #
 # We'll be getting this info from MySQL.
-# Thought: The entire user list might be huge. It probably makes more
-# sense to retrieve the users_answers data from Mongo first, pull user_ids, then 
-# query MySQL using only those user_ids to get profile data.
 #
 # Since user_ids will be primary keys in MySQL, the search is implicitly 
 # indexed and should be fast.
@@ -356,28 +351,27 @@ who are members of this competition.' # Includes competition_id
 end
 
 ##
+##
+# This is extra: There's a good chance it shouldn't be here if we
+# want to keep this tool focused on only generating the report. 
+# Leaving it in so you can at least follow my thought process.
 #
 # Stub: A function to create a question set based on a tag associated with 
 # an individual question.
 # Returns a structure like this:
-# { :qset_id_1 => [ :question_id_1, :question_id_2 ],
-#   :qset_id_2 => [ :question_id_3, :question_id_4 ] }
+# { :qset_id_1 => [ :question_id_1, :question_id_2 ] }
 #
 ##
 
-def create_question_set(tag)
+def create_question_set(tag,mongo_instance)
   
   question_set = nil
   
   #
-  # Iterate through all the questions in the DB
-  # If question[:tag] == tag, then add that question
-  # entity to question_set
+  # Select questions in the DB that match a given tag.
   #
   
-  search_questions_based_on_tag(tag)
-  
-  return questionSet
+  question_set = mongo_instance[:questions].select {|question_id,params| params[:tag] == tag}
 end
 
 ##
@@ -403,7 +397,12 @@ end
 ##
 
 def get_users_answers(mongo_instance)
-  # Example: mongo_instance[:users_answers]
+  
+  #
+  # Just a hypothetical example.
+  #
+  
+  all_users_answers = mongo_instance[:users_answers]
 end
 
 ##
@@ -418,7 +417,7 @@ end
 ##
 
 def get_all_cloud_files(mongo_instance)
-  # all_cloud_files = mongo_instance[:cloud_files]
+  all_cloud_files = mongo_instance[:cloud_files]
 end
 
 ##
@@ -428,14 +427,15 @@ end
 ##
 
 def facebook_connect(facebook_api_key)
-  #return facebook_instance
+  # Connect to facebook with the api key.
+  # return facebook_instance
 end
 
 ##
 # 
 # Stub: Helper method so that we can retrieve all the Facebook likes
 # and comments for user_ids attached to this competition.
-# Removes the requirement to make multiple calls.
+# Removes the requirement to make multiple calls per user.
 # 
 ##
 
@@ -447,7 +447,7 @@ def get_all_facebook_data(facebook_instance, user_id_list, competition_id)
     #
     # Example Facebook API calls.
     # Good chance we'd have to filter based on competition_id here on our side.
-    # In pretend-land here, I can pass it as a search parameter ;)
+    # In pretend-land here, I can pass it in as a search parameter ;)
     #
     
     # comments = facebook_connection_instance.retrieve_facebook_comments(user_id,competition_id)
@@ -472,7 +472,10 @@ end
 
 def get_challenge_questions(question_set, mongo_instance)
   
+  #
   # Select all questions from the mongo instance 
+  #
+  
   competition_questions = {}
   
   #
@@ -503,14 +506,15 @@ end
 
 #
 # TODO (maybe): Write a function that fills in points earned for questions of
-# type "multi" in the users_answers table. 
+# type "multi" in the users_answers table. It would do this by 
+# doing a simple comparison between the expected answer and the actual answer.
 # This could happen in a separate script, or we could do it here.
 #
 # My preference: We could have the points earned on "multi" questions 
 # get added to the DB at the time the user_answers submission is created 
 # inside users_answers. 
 # That's actually my preference at the moment, unless there's a good 
-# reason not to.
+# reason not to do so.
 #
 
 ##
@@ -518,11 +522,33 @@ end
 # Calculate total points earned for a given user. We'll use the
 # points already defined in user_answers.
 #
-# Each answer looks like the following in this example:
-# question_set_id => {question_id => {:answer => "", 
-#                                     :points => 2,
-#                                     :type => "multi"
-#                                     :reviewed => false}
+# Each user_answers entry looks like the following in this example:
+#{ :user_id_1 => 
+#                 { :qset_id_1 => 
+#                   { :question_id_1 => { 
+#                       :answer => "a", 
+#                       :points => 1,
+#                       :type => "multi",
+#                       :reviewed => false },
+#                     :question_id_2 => {
+#                       :answer => "b", 
+#                       :points => 2,
+#                       :type => "multi",
+#                       :reviewed => false }
+#                   },
+#                   :qset_id_2 =>
+#                   { :question_id_3 => { 
+#                       :answer => "c", 
+#                       :points => 3,
+#                       :type => "multi",
+#                       :reviewed => false },
+#                     :question_id_4 => {
+#                       :answer => "My wonderful answer", 
+#                       :points => 10, 
+#                       :type => "text",
+#                       :reviewed => true }
+#                   }
+#                 },
 #
 # Also: If there is a text field that is not :reviewed == true, return nil.
 # Otherwise, calculate a total score. If not reviewed, the true final
@@ -534,23 +560,21 @@ def calculate_points_earned(user_answers)
   points = 0
   user_answers.each do |question_set, answers|
     answers.each do |question_id,params|
-      #puts "DEBUG: question ID: #{question_id}"
-      #puts "DEBUG: params: #{params}"
+
       if params[:text] == true and params[:reviewed] == false
         return nil
       else
         points += params[:points]
-        #puts "DEBUG: Current points earned: #{points}"
       end
     end
   end
-  #puts "DEBUG: Total points earned: #{points}"
+  
   return points
 end
 
 ##
 #
-#
+# Calculate the highest possible score.
 #
 ##
 
@@ -573,7 +597,7 @@ end
 #
 ##
 
-def get_question_sets(competition_id,mongo_instance)
+def get_question_sets(competition_id, mongo_instance)
 end
 
 
@@ -678,7 +702,8 @@ user_id_list = users.keys()
 # mongo_instance = mongo_connect(mongo_params)
 
 #
-# Populate the users_answers data structure from MongoDB
+# Populate the users_answers data structure from MongoDB. Calling 
+# this once so we don't make repeated API calls per user.
 #
 
 # users_answers = get_users_answers(mongo_instance)
@@ -718,10 +743,10 @@ all_cloud_files = cloud_files
 # by API call?
 #
 
-# facebook_connection_instance = facebook_connect(facebook_api_key)
+# facebook_instance = facebook_connect(facebook_api_key)
 
 all_facebook_data = get_all_facebook_data(
-  facebook_instance, 
+  facebook_instance, # We can do this because facebook_instance is nil.
   user_id_list, 
   competition_id)
 
@@ -744,8 +769,6 @@ highest_possible_score = get_highest_possible_score(questions)
 #   :cloud_file_list ,
 # }
 #
-
-report_data_structure = {}
 
 #
 # Simple program flow.
@@ -789,8 +812,6 @@ users.each do |user_id,params|
   
   # answers = getAnswerData(id)
   user_answers = users_answers[user_id]
-  #puts "INFO: UserID:#{user_id}::Name:#{params[:name]}::\
-#Answers: #{user_answers}"
  
   #
   # We can calculate total points earned, for example.
@@ -798,10 +819,8 @@ users.each do |user_id,params|
   
   total_points = calculate_points_earned(user_answers)
   
-  #puts "INFO: #{user_id}:#{params[:name]}:#{total_points}:\
-#{facebook_info[:comments]}:#{facebook_info[:likes]}:#{cloud_files}"
-  
   total_facebook_likes = facebook_info[:likes]
+  
   total_facebook_comments = facebook_info[:comments].length
   
   #
@@ -817,32 +836,25 @@ users.each do |user_id,params|
     :total_facebook_comments => total_facebook_comments,
     :cloud_file_list => user_cloud_file_names  
   }
-     
-  #
-  # We can also build the data structure that we'll use to output a single
-  # row per user in Excel.
-  #
-  # Should contain: user_id, name, competition, number of facebook likes, number of facebook comments, 
-  # cloud_file names, total_points earned, total points possible.
-  #
   
 end
 
-puts "INFO: This is a datastructure we could feed into an excel generating tool."
+puts "INFO: This is a data structure we could feed into an excel generating tool."
 report_data_structure.each do |user_id,params|
   puts "#{user_id}: #{params}"
   puts "###"
 end
 
 #
-# Right now we're just overwriting the current report. When this goes live, we should prompt
+# Output Excel: Right now we're just overwriting the current report. When this goes live, we should prompt
 # so data doesn't get lost. We may want to allow the user to choose their own report name, as well.
-# Alternatively,generate a report name using a unique, pseudo-random number based on the 
+# Alternatively, generate a report name using a unique, pseudo-random number based on the 
 # current system time.
 #
 
 puts "INFO: Generating Excel report of results. Check the current directory from where you\
  ran this report."
+ 
 generate_excel(report_data_structure, competition_name)
 
 
